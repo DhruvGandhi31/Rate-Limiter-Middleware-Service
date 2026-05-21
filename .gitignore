@@ -1,0 +1,9 @@
+/rate-limiter
+/rate-limiter.exe
+/bin/
+*.test
+*.out
+coverage.*
+.DS_Store
+.idea/
+.vscode/

@@ -1,0 +1,24 @@
+# golangci-lint config. Conservative ruleset — flag real issues without forcing
+# stylistic noise. Adjust as the codebase grows.
+run:
+  timeout: 5m
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - bodyclose
+    - gofmt
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+        - bodyclose

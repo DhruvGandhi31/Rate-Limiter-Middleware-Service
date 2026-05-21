@@ -1,0 +1,46 @@
+# Rate-limiter configuration. Rules are evaluated top-to-bottom; the first
+# rule whose `match` regex matches the request path wins. An empty `match`
+# matches everything.
+server:
+  addr: ":8080"
+  read_timeout: 5s
+  write_timeout: 5s
+  shutdown_timeout: 10s
+
+redis:
+  addr: "localhost:6379"
+  pool_size: 100
+
+# closed = reject when Redis is down (correctness > availability)
+# open   = allow  when Redis is down (availability > correctness)
+fail_mode: "closed"
+
+logging:
+  level: "info"     # debug | info | warn | error
+  format: "json"    # json (recommended for prod) | text
+
+admin:
+  # Required token for /reset. Empty = open (dev only — startup logs a warning).
+  # Override at runtime with ADMIN_TOKEN.
+  token: ""
+
+rules:
+  - name: "admin-api"
+    identifier: "api_key"
+    match: "^/admin/"
+    algorithm: "sliding_window"
+    limit: 30
+    window: 1m
+
+  - name: "burst-tolerant"
+    identifier: "api_key"
+    match: "^/api/"
+    algorithm: "token_bucket"
+    limit: 100        # bucket capacity (max burst)
+    refill_rate: 10   # tokens/sec
+
+  - name: "per-ip-default"
+    identifier: "ip"
+    algorithm: "fixed_window"
+    limit: 600
+    window: 1m
