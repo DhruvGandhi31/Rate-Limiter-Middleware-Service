@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
 
 permissions:
@@ -25,9 +25,9 @@ jobs:
           --health-retries 10
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.25"
           cache: true
@@ -58,12 +58,12 @@ jobs:
     name: golangci-lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.25"
           cache: true
-      - uses: golangci/golangci-lint-action@v6
+      # v8 runs on Node 24 and expects a golangci-lint v2 config (see .golangci.yml).
+      - uses: golangci/golangci-lint-action@v8
         with:
-          version: v1.61
-          args: --timeout=5m
+          version: v2.1.6
