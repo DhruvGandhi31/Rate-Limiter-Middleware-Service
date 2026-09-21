@@ -65,6 +65,34 @@ correctness, not throughput. This lets unit + concurrent tests run without
 Redis, and the integration suite runs the exact same algorithms against a
 real Redis via `testcontainers-go` (or `REDIS_ADDR` when set).
 
+## 2026-09-21 — `strconv` in the Fake store instead of hand-rolled parsers
+
+`internal/store/fake.go` previously carried ~65 lines of hand-rolled numeric
+parsing and formatting (`parseFloat`, `parseInt`, `formatFloat`, `padTwo`,
+`formatInt`). The original comment said "fmt/strconv pulled inline so test
+code doesn't depend on extra packages" — a rationale that never held up:
+`strconv` is in the standard library, always available, and the hand-rolled
+versions had subtle correctness gaps (`formatFloat`'s two-decimal truncation,
+`parseInt` silently returning 0 on non-digit input, no negative-number
+handling on `parseFloat`). Net: 72 lines deleted, 8 added, behavior
+preserved.
+
+Two implementation choices worth recording:
+
+- **Parse errors are ignored with `_`.** The Fake writes the same values it
+  reads two lines above, in a format it controls. A parse failure would
+  indicate a bug in this file, not a bad input from a caller. Panicking
+  would surface such a bug faster but adds noise for a scenario that has
+  no path to occur. A comment at the call site documents the invariant.
+- **`FormatFloat` uses precision `-1`, not a fixed decimal count.** `-1`
+  produces the shortest representation that round-trips back to the same
+  float64. The old code always wrote two decimal places (`99.50`); the new
+  code writes `99.5` or `99` when precision allows. `ParseFloat` accepts
+  both, so round-trip within the Fake is preserved. The user-visible
+  `/status` payload now renders the value slightly more cleanly. If a
+  future need requires fixed-width formatting (e.g. for a diff-friendly
+  Redis snapshot dump), swap `-1` for `6`.
+
 ## 2026-09-21 — CI lint temporarily removed (was: golangci-lint v1.61 → v2.1.6 migration)
 
 The golangci-lint action was churning on the v1 → v2 rewrite: v6 of the

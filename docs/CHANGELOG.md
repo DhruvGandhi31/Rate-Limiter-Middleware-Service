@@ -15,6 +15,14 @@ the first tagged release.
   `actions/setup-go@v6`. Fixed the `on: push` trigger to include the `master`
   branch (was `main` only).
 
+### Changed
+- Replaced hand-rolled numeric helpers (`parseFloat`, `parseInt`, `formatFloat`,
+  `formatInt`, `padTwo`) in `internal/store/fake.go` with `strconv` equivalents.
+  Net: 72 lines deleted, 8 added. Behavior identical; token-state strings may
+  now render without trailing `.00` (`strconv.FormatFloat` with `-1` precision
+  emits the shortest round-trippable representation) — read-side is unchanged
+  because both formats parse the same way.
+
 ### Removed
 - Dead-code helper `stripPrefix` and the now-unused `strings` import in
   `api/handlers.go`.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -71,8 +72,10 @@ func (f *Fake) EvalTokenBucket(ctx context.Context, key string, capacity int64, 
 	tokens := float64(capacity)
 	lastRefill := nowMs
 	if t, ok := h["tokens"]; ok {
-		tokens = parseFloat(t)
-		lastRefill = parseInt(h["last_refill"])
+		// Errors ignored: the Fake writes these values itself in a controlled
+		// format, so a parse failure would indicate a bug in this same file.
+		tokens, _ = strconv.ParseFloat(t, 64)
+		lastRefill, _ = strconv.ParseInt(h["last_refill"], 10, 64)
 	}
 	elapsed := float64(nowMs-lastRefill) / 1000.0
 	if elapsed > 0 {
@@ -86,8 +89,8 @@ func (f *Fake) EvalTokenBucket(ctx context.Context, key string, capacity int64, 
 		tokens -= float64(requested)
 		allowed = true
 	}
-	h["tokens"] = formatFloat(tokens)
-	h["last_refill"] = formatInt(nowMs)
+	h["tokens"] = strconv.FormatFloat(tokens, 'f', -1, 64)
+	h["last_refill"] = strconv.FormatInt(nowMs, 10)
 
 	var resetMs int64
 	if tokens < float64(capacity) && refillRate > 0 {
@@ -158,7 +161,7 @@ func (f *Fake) Get(ctx context.Context, key string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if c, ok := f.counters[key]; ok {
-		return formatInt(c.value), nil
+		return strconv.FormatInt(c.value, 10), nil
 	}
 	return "", nil
 }
@@ -199,70 +202,3 @@ func (f *Fake) Ping(ctx context.Context) error {
 }
 
 func (f *Fake) Close() error { return nil }
-
-// Tiny number helpers — fmt/strconv pulled inline so test code doesn't depend
-// on extra packages.
-func parseFloat(s string) float64 {
-	var x float64
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c == '.' {
-			frac := 0.0
-			mul := 0.1
-			for j := i + 1; j < len(s); j++ {
-				frac += float64(s[j]-'0') * mul
-				mul /= 10
-			}
-			return x + frac
-		}
-		x = x*10 + float64(c-'0')
-	}
-	return x
-}
-
-func parseInt(s string) int64 {
-	var x int64
-	for i := 0; i < len(s); i++ {
-		x = x*10 + int64(s[i]-'0')
-	}
-	return x
-}
-
-func formatFloat(x float64) string {
-	// Two decimal places is plenty for our token math.
-	whole := int64(x)
-	frac := int64((x - float64(whole)) * 100)
-	if frac < 0 {
-		frac = -frac
-	}
-	return formatInt(whole) + "." + padTwo(frac)
-}
-
-func padTwo(x int64) string {
-	if x < 10 {
-		return "0" + formatInt(x)
-	}
-	return formatInt(x)
-}
-
-func formatInt(x int64) string {
-	if x == 0 {
-		return "0"
-	}
-	neg := x < 0
-	if neg {
-		x = -x
-	}
-	buf := [20]byte{}
-	i := len(buf)
-	for x > 0 {
-		i--
-		buf[i] = byte('0' + x%10)
-		x /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
-}
