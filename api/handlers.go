@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -328,11 +327,3 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
-
-// stripPrefix is a small helper for tests/admin tools that want to derive an
-// identifier back from a Redis key.
-func stripPrefix(s, prefix string) string {
-	return strings.TrimPrefix(s, prefix)
-}
-
-var _ = stripPrefix
