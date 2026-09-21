@@ -9,6 +9,8 @@ the first tagged release.
 ### Added
 - `LICENSE` (MIT).
 - `docs/` folder with `CHANGELOG.md`, `DECISIONS.md`, and an index.
+- README badges: CI status, Go version (auto-read from `go.mod`), MIT license,
+  Redis version.
 
 ### Changed
 - Bumped CI action versions to Node 24: `actions/checkout@v5`,
