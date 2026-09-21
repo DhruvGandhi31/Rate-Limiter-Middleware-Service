@@ -1,5 +1,10 @@
 # Rate Limiter Middleware Service
 
+[![CI](https://github.com/DhruvGandhi31/Rate-Limiter-Middleware-Service/actions/workflows/ci.yml/badge.svg)](https://github.com/DhruvGandhi31/Rate-Limiter-Middleware-Service/actions/workflows/ci.yml)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/DhruvGandhi31/Rate-Limiter-Middleware-Service)](https://go.dev/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Redis](https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white)](https://redis.io/)
+
 Distributed rate-limiting service in Go, backed by Redis for multi-instance consistency.
 Implements three algorithms — Token Bucket, Fixed Window, Sliding Window Log — behind a
 single HTTP API. All state lives in Redis and every read-modify-write is an atomic Lua
