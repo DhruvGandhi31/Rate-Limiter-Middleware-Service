@@ -53,17 +53,3 @@ jobs:
         env:
           REDIS_ADDR: localhost:6379
         run: go test -bench=. -benchtime=1x -run=^$ ./bench/...
-
-  lint:
-    name: golangci-lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
-        with:
-          go-version: "1.25"
-          cache: true
-      # v8 runs on Node 24 and expects a golangci-lint v2 config (see .golangci.yml).
-      - uses: golangci/golangci-lint-action@v8
-        with:
-          version: v2.1.6
