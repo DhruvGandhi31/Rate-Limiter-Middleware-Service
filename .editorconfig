@@ -1,0 +1,27 @@
+# https://editorconfig.org — matches the styles already in this repo so
+# opening a file in any editor preserves the existing formatting.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Go is strict about tabs — gofmt will fight anything else.
+[*.go]
+indent_style = tab
+
+# Lua scripts in internal/store/scripts already use 4-space indent.
+[*.lua]
+indent_size = 4
+
+# Makefiles require literal tab characters — recipe lines break otherwise.
+[{Makefile,makefile,*.mk}]
+indent_style = tab
+
+# Markdown treats two trailing spaces as a hard line break, so don't strip them.
+[*.md]
+trim_trailing_whitespace = false

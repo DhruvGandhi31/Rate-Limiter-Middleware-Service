@@ -11,6 +11,9 @@ the first tagged release.
 - `docs/` folder with `CHANGELOG.md`, `DECISIONS.md`, and an index.
 - README badges: CI status, Go version (auto-read from `go.mod`), MIT license,
   Redis version.
+- `.editorconfig` matching the styles already in the repo (2-space default,
+  tabs for Go and Makefiles, 4-space for Lua, preserve trailing whitespace in
+  Markdown for hard line breaks).
 
 ### Changed
 - Bumped CI action versions to Node 24: `actions/checkout@v5`,
