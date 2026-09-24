@@ -1,9 +1,27 @@
+# Build artifacts
 /rate-limiter
 /rate-limiter.exe
 /bin/
+/dist/
+
+# Go test/coverage/profile outputs
 *.test
 *.out
+*.prof
+*.pprof
 coverage.*
+
+# Local runtime junk
+*.log
+tmp/
+
+# Local environment files — never commit real secrets
+.env
+.env.local
+.env.*.local
+
+# Editor / OS
 .DS_Store
+Thumbs.db
 .idea/
 .vscode/
