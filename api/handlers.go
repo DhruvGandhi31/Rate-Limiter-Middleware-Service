@@ -1,6 +1,10 @@
-// Package api exposes the rate-limiter as an HTTP service. Clients call /check
-// to consume a token, /status to inspect state, /reset for admin overrides, and
-// /health for orchestration probes.
+// Package api exposes the rate-limiter as an HTTP service. Clients call
+// /check to consume a token, /status to inspect state, /reset for admin
+// overrides, /health for orchestration probes, and /metrics for scraping.
+//
+// The three helper concerns — auth, request observability, and status-class
+// bucketing — live in sibling files (auth.go, observe.go) to keep this file
+// focused on endpoint handlers.
 package api
 
 import (
@@ -16,47 +20,18 @@ import (
 
 	"github.com/dhruvgandhi/rate-limiter/internal/algorithms"
 	"github.com/dhruvgandhi/rate-limiter/internal/config"
-	"github.com/dhruvgandhi/rate-limiter/internal/metrics"
 	"github.com/dhruvgandhi/rate-limiter/internal/middleware"
 	"github.com/dhruvgandhi/rate-limiter/internal/store"
 )
 
+// Handler bundles the moving parts every endpoint needs: the compiled
+// Limiter, the raw Store for state inspection, a logger for structured
+// access logging, and an optional AdminAuth for /reset.
 type Handler struct {
 	Limiter   *middleware.Limiter
 	Store     store.Store
 	Logger    *slog.Logger
-	AdminAuth AdminAuth // nil = admin endpoints open (dev only)
-}
-
-// AdminAuth gates admin endpoints (/reset). nil means no auth, suitable for
-// local dev but never production — main wires a real auth in when configured.
-type AdminAuth interface {
-	Authorize(r *http.Request) bool
-}
-
-// BearerTokenAuth is a constant-time-compared shared-secret check. Cheap, no
-// external dependency, fine for an internal admin surface. For multi-tenant
-// production swap in OIDC / mTLS.
-type BearerTokenAuth struct {
-	Token string
-}
-
-func (b *BearerTokenAuth) Authorize(r *http.Request) bool {
-	const prefix = "Bearer "
-	h := r.Header.Get("Authorization")
-	if len(h) <= len(prefix) || h[:len(prefix)] != prefix {
-		return false
-	}
-	got := h[len(prefix):]
-	// constant-time compare to avoid leaking length via timing
-	if len(got) != len(b.Token) {
-		return false
-	}
-	var diff byte
-	for i := 0; i < len(got); i++ {
-		diff |= got[i] ^ b.Token[i]
-	}
-	return diff == 0
+	AdminAuth AdminAuth // nil = admin endpoints open (dev only — logged)
 }
 
 func NewHandler(l *middleware.Limiter, s store.Store, log *slog.Logger, auth AdminAuth) *Handler {
@@ -66,6 +41,9 @@ func NewHandler(l *middleware.Limiter, s store.Store, log *slog.Logger, auth Adm
 	return &Handler{Limiter: l, Store: s, Logger: log, AdminAuth: auth}
 }
 
+// Routes wires the HTTP surface. observe() sits above every route so both
+// /metrics and /health show up in dashboards; /reset is nested in a group
+// so requireAdmin only guards the admin surface, not the public one.
 func (h *Handler) Routes() http.Handler {
 	r := chi.NewRouter()
 	r.Use(h.observe)
@@ -80,75 +58,9 @@ func (h *Handler) Routes() http.Handler {
 	return r
 }
 
-// observe records HTTP metrics and a structured access log line for every
-// request. Wrapping the response writer is the only way to learn the status
-// code after the handler returns.
-func (h *Handler) observe(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		ww := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		next.ServeHTTP(ww, r)
-
-		route := chi.RouteContext(r.Context()).RoutePattern()
-		if route == "" {
-			route = r.URL.Path
-		}
-		dur := time.Since(start)
-		metrics.HTTPRequestDuration.WithLabelValues(route).Observe(dur.Seconds())
-		metrics.HTTPRequestsTotal.WithLabelValues(route, statusClass(ww.status)).Inc()
-
-		// Skip /metrics scrape spam at info level — debug only.
-		if route == "/metrics" {
-			h.Logger.Debug("http", "method", r.Method, "route", route, "status", ww.status, "duration_ms", dur.Milliseconds())
-			return
-		}
-		h.Logger.Info("http", "method", r.Method, "route", route, "status", ww.status, "duration_ms", dur.Milliseconds())
-	})
-}
-
-// requireAdmin rejects requests that don't satisfy the configured admin auth.
-// When AdminAuth is nil (dev mode) it logs a loud warning so it's obvious in
-// startup logs and access logs that the admin surface is open.
-func (h *Handler) requireAdmin(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if h.AdminAuth == nil {
-			h.Logger.Warn("admin endpoint hit with no auth configured", "route", r.URL.Path, "remote", r.RemoteAddr)
-			next.ServeHTTP(w, r)
-			return
-		}
-		if !h.AdminAuth.Authorize(r) {
-			h.Logger.Warn("admin auth failed", "route", r.URL.Path, "remote", r.RemoteAddr)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-type statusRecorder struct {
-	http.ResponseWriter
-	status int
-}
-
-func (s *statusRecorder) WriteHeader(code int) {
-	s.status = code
-	s.ResponseWriter.WriteHeader(code)
-}
-
-func statusClass(status int) string {
-	switch {
-	case status >= 500:
-		return "5xx"
-	case status >= 400:
-		return "4xx"
-	case status >= 300:
-		return "3xx"
-	case status >= 200:
-		return "2xx"
-	default:
-		return "1xx"
-	}
-}
+// ---------------------------------------------------------------------------
+// /check — consume a token
+// ---------------------------------------------------------------------------
 
 type checkRequest struct {
 	Rule       string `json:"rule"`
@@ -179,6 +91,8 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 	}
 
 	d, err := h.Limiter.AllowKey(r.Context(), req.Rule, req.Identifier)
+	// A non-nil err with d.Limit == 0 means the failure wasn't Redis-related
+	// (the fail-mode translation would have populated Limit). Treat as 500.
 	if err != nil && d.Limit == 0 {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -207,6 +121,10 @@ func (h *Handler) check(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, resp)
 }
 
+// ---------------------------------------------------------------------------
+// /status — inspect current state without consuming
+// ---------------------------------------------------------------------------
+
 type statusResponse struct {
 	Rule      string `json:"rule"`
 	Algorithm string `json:"algorithm"`
@@ -214,9 +132,8 @@ type statusResponse struct {
 	State     any    `json:"state"`
 }
 
-// status inspects current bucket state for a key without consuming capacity.
-// The {key} path param is the identifier; the rule is selected via ?rule= or
-// defaults to the first configured rule.
+// status is a read-only view of the bucket for a given identifier under a
+// given rule. It never consumes a token, so it's safe to poll from ops tools.
 func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 	identifier := chi.URLParam(r, "key")
 	ruleName := r.URL.Query().Get("rule")
@@ -243,6 +160,12 @@ func (h *Handler) status(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// inspect returns algorithm-specific state for /status. Fixed-window state
+// is deliberately not surfaced: the live counter lives under a key suffixed
+// with the current window index, and computing that suffix here would
+// duplicate math that already lives in the algorithm's Lua script — a
+// classic invitation to drift. Operators can inspect fixed-window state
+// directly with `redis-cli KEYS 'ratelimit:fixed_window:<id>:*'`.
 func (h *Handler) inspect(ctx context.Context, rule middleware.CompiledRule, key string) (any, error) {
 	switch rule.Algorithm {
 	case config.TokenBucket:
@@ -250,9 +173,11 @@ func (h *Handler) inspect(ctx context.Context, rule middleware.CompiledRule, key
 		if err != nil {
 			return nil, err
 		}
+		// Values are returned as strings on purpose — matches what redis-cli
+		// HGETALL prints, which keeps ops parity with direct Redis inspection.
 		return map[string]any{
-			"capacity":   rule.Limit,
-			"tokens":     m["tokens"],
+			"capacity":    rule.Limit,
+			"tokens":      m["tokens"],
 			"last_refill": m["last_refill"],
 		}, nil
 	case config.SlidingWindow:
@@ -262,15 +187,22 @@ func (h *Handler) inspect(ctx context.Context, rule middleware.CompiledRule, key
 		}
 		return map[string]any{"limit": rule.Limit, "in_window": count}, nil
 	case config.FixedWindow:
-		// Active bucket key is suffixed with the window index; expose the prefix and
-		// the last seen counter for that prefix using the store. Reading the exact
-		// active bucket requires reproducing the bucket math, so use the namespace prefix.
-		return map[string]any{"limit": rule.Limit, "note": "fixed window counter is per-window; inspect with redis-cli"}, nil
+		return map[string]any{
+			"limit": rule.Limit,
+			"note":  "fixed-window counters rotate per window; inspect the live bucket with `redis-cli KEYS 'ratelimit:fixed_window:<id>:*'`",
+		}, nil
 	}
 	return nil, nil
 }
 
-// reset clears state for a key. Admin-only — wire auth in front for production.
+// ---------------------------------------------------------------------------
+// /reset — admin: clear state for a key
+// ---------------------------------------------------------------------------
+
+// reset drops the bucket for one identifier under one rule. Guarded by
+// requireAdmin in the router. Fixed-window keys can't be fully reset in one
+// call because they're suffixed by window index; the response documents
+// that limitation rather than pretending a SCAN-and-DEL is safe under load.
 func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 	identifier := chi.URLParam(r, "key")
 	ruleName := r.URL.Query().Get("rule")
@@ -287,8 +219,6 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// Fixed window keys carry a window suffix; document the limitation rather than
-	// scan-and-delete which is expensive and racy.
 	if rule.Algorithm == config.FixedWindow {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"reset":  false,
@@ -300,11 +230,18 @@ func (h *Handler) reset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"reset": true, "key": key})
 }
 
+// ---------------------------------------------------------------------------
+// /health — liveness + Redis connectivity
+// ---------------------------------------------------------------------------
+
 type healthResponse struct {
 	Status string `json:"status"`
 	Redis  string `json:"redis"`
 }
 
+// health returns 200 only when Redis responds to PING within 500ms. The
+// short timeout is deliberate — a health probe should fail fast when the
+// dependency is degraded so a load balancer stops routing new traffic.
 func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 500*time.Millisecond)
 	defer cancel()
@@ -315,6 +252,12 @@ func (h *Handler) health(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, healthResponse{Status: "ok", Redis: "ok"})
 }
 
+// ---------------------------------------------------------------------------
+// helpers
+// ---------------------------------------------------------------------------
+
+// defaultRuleName picks the first configured rule as the fallback when the
+// caller doesn't specify one. Order matches config.yaml top-to-bottom.
 func (h *Handler) defaultRuleName() string {
 	if len(h.Limiter.Rules) > 0 {
 		return h.Limiter.Rules[0].Name

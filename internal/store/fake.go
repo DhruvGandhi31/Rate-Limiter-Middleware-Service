@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"maps"
 	"sort"
 	"strconv"
 	"sync"
@@ -166,14 +167,14 @@ func (f *Fake) Get(ctx context.Context, key string) (string, error) {
 	return "", nil
 }
 
+// HGetAll returns a defensive copy so callers can iterate the result without
+// racing with a concurrent Eval* call that mutates the underlying map.
 func (f *Fake) HGetAll(ctx context.Context, key string) (map[string]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	src := f.hashes[key]
 	out := make(map[string]string, len(src))
-	for k, v := range src {
-		out[k] = v
-	}
+	maps.Copy(out, src)
 	return out, nil
 }
 
