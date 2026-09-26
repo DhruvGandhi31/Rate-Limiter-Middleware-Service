@@ -130,8 +130,12 @@ func (l *Limiter) AllowKey(ctx context.Context, ruleName, identifier string) (al
 }
 
 // evaluate is the single instrumented call site for limiter decisions. Every
-// allow/reject/error flows through here, so the metrics are a single source of
-// truth for "what did the limiter actually do."
+// allow/reject/error path flows through here so ratelimit_requests_total is a
+// true source of truth for "what did the limiter actually do."
+//
+// Return signature: (decision, applied, err). applied=false is only returned
+// by callers when no rule matched (see Allow). Within evaluate we always
+// return applied=true because a rule was selected before we got here.
 func (l *Limiter) evaluate(ctx context.Context, rule CompiledRule, key string) (algorithms.Decision, bool, error) {
 	start := time.Now()
 	d, err := rule.Limiter.Allow(ctx, key, rule.Rule)
@@ -140,24 +144,31 @@ func (l *Limiter) evaluate(ctx context.Context, rule CompiledRule, key string) (
 	if err != nil {
 		if errors.Is(err, store.ErrRedisUnavailable) {
 			metrics.RedisErrors.WithLabelValues(rule.Name).Inc()
-			d := algorithms.Decision{Allowed: l.FailMode == config.FailOpen, Limit: rule.Limit}
-			labelForFailMode := "rejected"
-			if d.Allowed {
-				labelForFailMode = "allowed"
-			}
-			metrics.RequestsTotal.WithLabelValues(rule.Name, string(rule.Algorithm), labelForFailMode).Inc()
+			// Fail-mode translates the outage into a synthetic Decision: the
+			// caller still gets the rule's Limit for header rendering, and the
+			// metric labels the synthetic outcome as allowed/rejected so
+			// dashboards can compare fail-mode behavior across rules.
+			d = algorithms.Decision{Allowed: l.FailMode == config.FailOpen, Limit: rule.Limit}
+			metrics.RequestsTotal.WithLabelValues(rule.Name, string(rule.Algorithm), decisionLabel(d.Allowed)).Inc()
 			return d, true, err
 		}
 		metrics.RequestsTotal.WithLabelValues(rule.Name, string(rule.Algorithm), "error").Inc()
 		return algorithms.Decision{}, true, err
 	}
 
-	decision := "rejected"
-	if d.Allowed {
-		decision = "allowed"
-	}
-	metrics.RequestsTotal.WithLabelValues(rule.Name, string(rule.Algorithm), decision).Inc()
+	metrics.RequestsTotal.WithLabelValues(rule.Name, string(rule.Algorithm), decisionLabel(d.Allowed)).Inc()
 	return d, true, nil
+}
+
+// decisionLabel maps a boolean to the Prometheus label used for the
+// `decision` dimension. Extracted so the happy path and the fail-mode path
+// can't drift apart (one saying "allow" and the other "allowed" would
+// silently split a counter into two series).
+func decisionLabel(allowed bool) string {
+	if allowed {
+		return "allowed"
+	}
+	return "rejected"
 }
 
 // RuleByName is exposed so admin handlers can resolve a rule for /reset.

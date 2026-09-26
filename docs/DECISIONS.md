@@ -10,6 +10,31 @@ link back.
 
 ---
 
+## 2026-09-26 — `api/` package split by concern, not by endpoint
+
+`api/handlers.go` had grown to 329 lines mixing four unrelated concerns:
+authentication (interface + bearer-token impl), HTTP observability
+(access-log middleware, metrics wrapper, status-class bucketing), the four
+endpoint handlers themselves, and JSON helpers. Split into three files:
+
+- `api/handlers.go` — Handler struct, `Routes()`, the four endpoint
+  handlers, `writeJSON`
+- `api/auth.go` — `AdminAuth` interface + `BearerTokenAuth`
+- `api/observe.go` — `observe`, `requireAdmin`, `statusRecorder`,
+  `statusClass`
+
+**Why by concern, not by endpoint** (i.e. why not `check.go`, `status.go`,
+`reset.go`, `health.go`): endpoint-per-file loses the shared shape between
+handlers (they all use the same helpers, same response conventions), and
+four 40-line files is worse to navigate than one 200-line one. Splitting
+by concern keeps handlers together where readers expect them, while
+extracting the two genuinely separate concerns (auth, observability) that
+have their own contracts and can be reasoned about in isolation.
+
+No behavior change. No new abstractions. No imports of `api` broke because
+the exported surface (`Handler`, `NewHandler`, `AdminAuth`,
+`BearerTokenAuth`) all still live in `package api`.
+
 ## 2026-09-21 — Atomic Redis Lua scripts, not distributed locks
 
 Every rate-limit read-modify-write happens inside a Lua script called via
