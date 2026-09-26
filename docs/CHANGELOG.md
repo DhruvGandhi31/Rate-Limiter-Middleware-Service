@@ -14,6 +14,9 @@ the first tagged release.
 - `.editorconfig` matching the styles already in the repo (2-space default,
   tabs for Go and Makefiles, 4-space for Lua, preserve trailing whitespace in
   Markdown for hard line breaks).
+- Extended `.gitignore`: `dist/`, `*.prof`, `*.pprof`, `*.log`, `tmp/`, `.env`,
+  `.env.local`, `.env.*.local`, `Thumbs.db`. Also grouped existing entries
+  under section headers.
 
 ### Changed
 - Bumped CI action versions to Node 24: `actions/checkout@v5`,
